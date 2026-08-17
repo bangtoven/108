@@ -25,11 +25,12 @@
     background: #000;
     display: flex; align-items: center; justify-content: center;
   }
-  /* long-press menu — only reachable mid-session */
-  #menu {
+
+  /* shared full-screen overlay look for menu / landing / records / summary */
+  .overlay {
     display: none;
     position: fixed; inset: 0;
-    background: rgba(0,0,0,0.95);
+    background: rgba(0,0,0,0.97);
     color: #eee;
     flex-direction: column;
     align-items: center;
@@ -38,7 +39,8 @@
     padding: 24px;
     text-align: center;
   }
-  #menu.open { display: flex; }
+  .overlay.show { display: flex; }
+
   #count-display { font-size: 64px; font-weight: 300; letter-spacing: 2px; }
   #count-label { font-size: 14px; opacity: 0.5; margin-top: -12px; }
   .menu-btn {
@@ -83,29 +85,7 @@
     to { transform: translate(-50%, -50%) scale(2.4); opacity: 0; }
   }
 
-  #start-flash {
-    position: fixed; inset: 0;
-    display: flex; align-items: center; justify-content: center;
-    color: #fff;
-    font-size: 88px;
-    font-weight: 200;
-    opacity: 0;
-    pointer-events: none;
-    transition: opacity 0.7s ease;
-  }
-  #start-flash.show { opacity: 0.9; transition: opacity 0.25s ease; }
-
   /* completion ring — shown the instant the count reaches 108 */
-  #complete-screen {
-    display: none;
-    position: fixed; inset: 0;
-    background: #000;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    gap: 22px;
-  }
-  #complete-screen.show { display: flex; }
   .complete-ring {
     width: 130px; height: 130px;
     border-radius: 50%;
@@ -120,48 +100,36 @@
   .complete-text { color: #eee; font-size: 16px; letter-spacing: 1px; opacity: 0.85; }
   .complete-hint { color: #999; font-size: 12px; opacity: 0.55; }
 
-  /* summary screen — the resting/"done" state after finishing */
-  #summary-screen {
-    display: none;
-    position: fixed; inset: 0;
-    background: #000;
-    color: #eee;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    gap: 26px;
-    padding: 32px;
-    text-align: center;
-  }
-  #summary-screen.show { display: flex; }
   .summary-label { font-size: 12px; opacity: 0.45; letter-spacing: 1px; margin-bottom: 8px; }
   .summary-date { font-size: 14px; opacity: 0.5; }
   .summary-start { font-size: 17px; opacity: 0.9; margin-top: 4px; }
   .summary-current-duration { font-size: 30px; font-weight: 300; margin-top: 10px; }
   .summary-divider { width: 60px; height: 1px; background: #333; }
-  #summary-history {
+  .record-list {
     font-size: 13px;
-    opacity: 0.55;
+    opacity: 0.6;
     max-height: 22vh;
     overflow-y: auto;
     line-height: 1.9;
     width: 100%;
     max-width: 300px;
   }
+  #records-list { max-height: 50vh; }
 </style>
 </head>
 <body>
 
 <div id="stage"></div>
-<div id="start-flash">0</div>
 
-<div id="complete-screen">
+<!-- completion ring: shown the instant count hits 108 -->
+<div class="overlay" id="complete-screen">
   <div class="complete-ring"></div>
   <div class="complete-text">다 하셨습니다</div>
   <div class="complete-hint">눌러서 마치기</div>
 </div>
 
-<div id="summary-screen">
+<!-- post-completion summary: the resting "done" state for this run -->
+<div class="overlay" id="summary-screen">
   <div>
     <div class="summary-label">이번 기록</div>
     <div class="summary-date" id="summary-date"></div>
@@ -171,14 +139,28 @@
   <div class="summary-divider"></div>
   <div>
     <div class="summary-label">지난 기록</div>
-    <div id="summary-history"></div>
+    <div class="record-list" id="summary-history"></div>
   </div>
-  <button class="menu-btn" id="restart-btn">처음부터 다시 시작</button>
+  <button class="menu-btn" id="restart-btn">처음으로</button>
+</div>
+
+<!-- landing screen: shown on launch once at least one record exists -->
+<div class="overlay" id="landing-screen">
+  <button class="menu-btn" id="landing-start-btn">시작</button>
+  <button class="menu-btn" id="landing-records-btn">기록</button>
+</div>
+
+<!-- records screen: full history, reached from the landing screen -->
+<div class="overlay" id="records-screen">
+  <div class="summary-label">기록</div>
+  <div class="record-list" id="records-list"></div>
+  <button class="menu-btn" id="records-back-btn">뒤로</button>
 </div>
 
 <div id="status-dot" title="wake lock status"></div>
 
-<div id="menu">
+<!-- mid-session long-press menu -->
+<div class="overlay" id="menu">
   <div>
     <div id="count-display">0</div>
     <div id="count-label">현재 카운트</div>
@@ -192,15 +174,15 @@
   const STORAGE_KEY = 'bow-counter-state-v2';
   const TARGET = 108;
   let state = load();
-  // runtime-only UI mode: 'counting' | 'awaitingFinish' | 'summary'
+  // runtime-only UI mode: 'counting' | 'awaitingFinish' | 'summary' | 'landing' | 'records'
   let screen = 'counting';
+  let recordsReturnTo = 'landing'; // where the records "뒤로" button should return to
 
   const stage = document.getElementById('stage');
   const menu = document.getElementById('menu');
   const countDisplay = document.getElementById('count-display');
   const resetBtn = document.getElementById('reset-btn');
   const statusDot = document.getElementById('status-dot');
-  const startFlash = document.getElementById('start-flash');
   const completeScreen = document.getElementById('complete-screen');
   const summaryScreen = document.getElementById('summary-screen');
   const summaryDate = document.getElementById('summary-date');
@@ -208,6 +190,12 @@
   const summaryCurrentDuration = document.getElementById('summary-current-duration');
   const summaryHistory = document.getElementById('summary-history');
   const restartBtn = document.getElementById('restart-btn');
+  const landingScreen = document.getElementById('landing-screen');
+  const landingStartBtn = document.getElementById('landing-start-btn');
+  const landingRecordsBtn = document.getElementById('landing-records-btn');
+  const recordsScreen = document.getElementById('records-screen');
+  const recordsList = document.getElementById('records-list');
+  const recordsBackBtn = document.getElementById('records-back-btn');
 
   function load() {
     try {
@@ -247,15 +235,16 @@
     return new Date(ts).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' });
   }
 
-  function showStartFlash() {
-    startFlash.classList.add('show');
-    setTimeout(() => startFlash.classList.remove('show'), 900);
+  function fmtRecordLine(h) {
+    return `${fmtDate(h.start)} ${fmtTimeOnly(h.start)} · ${fmtDuration(h.durationMs)}`;
   }
 
   function setScreen(next) {
     screen = next;
     completeScreen.classList.toggle('show', next === 'awaitingFinish');
     summaryScreen.classList.toggle('show', next === 'summary');
+    landingScreen.classList.toggle('show', next === 'landing');
+    recordsScreen.classList.toggle('show', next === 'records');
   }
 
   // finalize a full 108 session using the stored session start / pendingEnd
@@ -291,12 +280,18 @@
       summaryCurrentDuration.textContent = fmtDuration(cur.durationMs);
     }
     const past = state.completed.slice(0, -1).slice(-15).reverse();
-    summaryHistory.innerHTML = past.length === 0
-      ? '없음'
-      : past.map(h => `${fmtDate(h.start)} ${fmtTimeOnly(h.start)} · ${fmtDuration(h.durationMs)}`).join('<br>');
+    summaryHistory.innerHTML = past.length === 0 ? '없음' : past.map(fmtRecordLine).join('<br>');
+  }
+
+  function renderRecords() {
+    const all = state.completed.slice(-50).reverse();
+    recordsList.innerHTML = all.length === 0 ? '아직 없음' : all.map(fmtRecordLine).join('<br>');
   }
 
   // ---- app (re)launch handling ----
+  // First-ever launch (no history yet): land straight on the blank counting
+  // screen — nothing else shown, so the touch/long-press behavior has to be
+  // discovered rather than explained.
   if (state.awaitingFinish) {
     // 108 was already reached before the app closed — finalize it and
     // land on the summary, since that session is truly done
@@ -305,8 +300,9 @@
     setScreen('summary');
   } else {
     if (state.count > 0) archiveIncompleteAndReset();
-    setScreen('counting');
-    showStartFlash();
+    // once at least one record exists, subsequent launches open on the
+    // 시작 / 기록 landing menu instead of dropping straight into counting
+    setScreen(state.completed.length > 0 ? 'landing' : 'counting');
   }
 
   function spawnRipple(x, y) {
@@ -326,7 +322,6 @@
 
   function onPointerDown(e) {
     if (screen !== 'counting') return;
-    if (menu.classList.contains('open')) return;
     if (activePointerId !== null) return;
     activePointerId = e.pointerId;
     longPressFired = false;
@@ -341,10 +336,8 @@
     if (e.pointerId !== activePointerId) return;
     activePointerId = null;
     if (screen !== 'counting') return;
-    if (menu.classList.contains('open')) return;
     clearTimeout(longPressTimer);
     if (longPressFired) return;
-
     registerTap();
   }
 
@@ -375,8 +368,7 @@
   stage.addEventListener('pointercancel', onPointerCancel);
   stage.addEventListener('pointerleave', onPointerCancel);
 
-  // tap the completion ring to finish -> go to the summary screen, which
-  // is the resting/"done" state until the app is relaunched or restarted
+  // tap the completion ring to finish -> go to the summary screen
   completeScreen.addEventListener('pointerup', () => {
     if (screen !== 'awaitingFinish') return;
     finalizeCompletion();
@@ -388,29 +380,38 @@
   restartBtn.addEventListener('click', () => {
     state.sessionStart = null;
     save();
-    setScreen('counting');
-    showStartFlash();
+    setScreen('landing');
   });
 
+  // ---- landing (시작 / 기록) ----
+  landingStartBtn.addEventListener('click', () => {
+    setScreen('counting');
+  });
+
+  landingRecordsBtn.addEventListener('click', () => {
+    recordsReturnTo = 'landing';
+    renderRecords();
+    setScreen('records');
+  });
+
+  recordsBackBtn.addEventListener('click', () => {
+    setScreen(recordsReturnTo);
+  });
+
+  // ---- mid-session long-press menu ----
   function openMenu() {
     countDisplay.textContent = state.count;
-    menu.classList.add('open');
-    vibrate(20);
+    menu.classList.add('show');
   }
-
-  function closeMenu() {
-    menu.classList.remove('open');
-  }
-
+  menu.addEventListener('pointerdown', () => vibrate(20));
   menu.addEventListener('click', (e) => {
     if (e.target === resetBtn) return;
-    closeMenu();
+    menu.classList.remove('show');
   });
 
   resetBtn.addEventListener('click', () => {
     archiveIncompleteAndReset();
-    closeMenu();
-    showStartFlash();
+    menu.classList.remove('show');
   });
 
   // ---- hidden dev shortcuts (fast-forward the count while testing) ----
