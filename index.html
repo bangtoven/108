@@ -1,0 +1,468 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>108</title>
+<link rel="manifest" href="manifest.json">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black">
+<meta name="apple-mobile-web-app-title" content="108">
+<meta name="theme-color" content="#000000">
+<link rel="apple-touch-icon" href="icon-192.png">
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; user-select: none; -webkit-user-select: none; }
+  html, body {
+    width: 100%; height: 100%;
+    background: #000;
+    overflow: hidden;
+    touch-action: none;
+    font-family: -apple-system, system-ui, sans-serif;
+  }
+  #stage {
+    position: fixed; inset: 0;
+    background: #000;
+    display: flex; align-items: center; justify-content: center;
+  }
+  /* long-press menu — only reachable mid-session */
+  #menu {
+    display: none;
+    position: fixed; inset: 0;
+    background: rgba(0,0,0,0.95);
+    color: #eee;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 18px;
+    padding: 24px;
+    text-align: center;
+  }
+  #menu.open { display: flex; }
+  #count-display { font-size: 64px; font-weight: 300; letter-spacing: 2px; }
+  #count-label { font-size: 14px; opacity: 0.5; margin-top: -12px; }
+  .menu-btn {
+    background: #1a1a1a;
+    color: #eee;
+    border: 1px solid #333;
+    border-radius: 12px;
+    padding: 14px 28px;
+    font-size: 16px;
+    min-width: 220px;
+  }
+  .menu-btn:active { background: #2a2a2a; }
+  #close-hint { font-size: 12px; opacity: 0.35; margin-top: 8px; }
+  #status-dot {
+    position: fixed;
+    top: 10px; right: 10px;
+    width: 14px; height: 14px;
+    padding: 8px;
+    margin: -8px;
+  }
+  #status-dot::after {
+    content: '';
+    display: block;
+    width: 6px; height: 6px;
+    border-radius: 50%;
+    background: #222;
+  }
+  #status-dot.awake::after { background: #143; }
+
+  .ripple {
+    position: fixed;
+    width: 60px; height: 60px;
+    border-radius: 50%;
+    background: rgba(255,255,255,0.28);
+    border: 1px solid rgba(255,255,255,0.55);
+    transform: translate(-50%, -50%) scale(0.3);
+    opacity: 1;
+    pointer-events: none;
+    animation: ripple-anim 480ms ease-out forwards;
+  }
+  @keyframes ripple-anim {
+    to { transform: translate(-50%, -50%) scale(2.4); opacity: 0; }
+  }
+
+  #start-flash {
+    position: fixed; inset: 0;
+    display: flex; align-items: center; justify-content: center;
+    color: #fff;
+    font-size: 88px;
+    font-weight: 200;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.7s ease;
+  }
+  #start-flash.show { opacity: 0.9; transition: opacity 0.25s ease; }
+
+  /* completion ring — shown the instant the count reaches 108 */
+  #complete-screen {
+    display: none;
+    position: fixed; inset: 0;
+    background: #000;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 22px;
+  }
+  #complete-screen.show { display: flex; }
+  .complete-ring {
+    width: 130px; height: 130px;
+    border-radius: 50%;
+    border: 3px solid rgba(255,255,255,0.9);
+    box-shadow: 0 0 44px rgba(255,255,255,0.35);
+    animation: pulse-ring 1.5s ease-in-out infinite;
+  }
+  @keyframes pulse-ring {
+    0%, 100% { transform: scale(1); opacity: 0.85; }
+    50% { transform: scale(1.09); opacity: 1; }
+  }
+  .complete-text { color: #eee; font-size: 16px; letter-spacing: 1px; opacity: 0.85; }
+  .complete-hint { color: #999; font-size: 12px; opacity: 0.55; }
+
+  /* summary screen — the resting/"done" state after finishing */
+  #summary-screen {
+    display: none;
+    position: fixed; inset: 0;
+    background: #000;
+    color: #eee;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 26px;
+    padding: 32px;
+    text-align: center;
+  }
+  #summary-screen.show { display: flex; }
+  .summary-label { font-size: 12px; opacity: 0.45; letter-spacing: 1px; margin-bottom: 8px; }
+  .summary-date { font-size: 14px; opacity: 0.5; }
+  .summary-start { font-size: 17px; opacity: 0.9; margin-top: 4px; }
+  .summary-current-duration { font-size: 30px; font-weight: 300; margin-top: 10px; }
+  .summary-divider { width: 60px; height: 1px; background: #333; }
+  #summary-history {
+    font-size: 13px;
+    opacity: 0.55;
+    max-height: 22vh;
+    overflow-y: auto;
+    line-height: 1.9;
+    width: 100%;
+    max-width: 300px;
+  }
+</style>
+</head>
+<body>
+
+<div id="stage"></div>
+<div id="start-flash">0</div>
+
+<div id="complete-screen">
+  <div class="complete-ring"></div>
+  <div class="complete-text">다 하셨습니다</div>
+  <div class="complete-hint">눌러서 마치기</div>
+</div>
+
+<div id="summary-screen">
+  <div>
+    <div class="summary-label">이번 기록</div>
+    <div class="summary-date" id="summary-date"></div>
+    <div class="summary-start" id="summary-start"></div>
+    <div class="summary-current-duration" id="summary-current-duration"></div>
+  </div>
+  <div class="summary-divider"></div>
+  <div>
+    <div class="summary-label">지난 기록</div>
+    <div id="summary-history"></div>
+  </div>
+  <button class="menu-btn" id="restart-btn">처음부터 다시 시작</button>
+</div>
+
+<div id="status-dot" title="wake lock status"></div>
+
+<div id="menu">
+  <div>
+    <div id="count-display">0</div>
+    <div id="count-label">현재 카운트</div>
+  </div>
+  <button class="menu-btn" id="reset-btn">처음부터 다시 (리셋)</button>
+  <div id="close-hint">화면 아무 곳이나 눌러서 닫기</div>
+</div>
+
+<script>
+(function() {
+  const STORAGE_KEY = 'bow-counter-state-v2';
+  const TARGET = 108;
+  let state = load();
+  // runtime-only UI mode: 'counting' | 'awaitingFinish' | 'summary'
+  let screen = 'counting';
+
+  const stage = document.getElementById('stage');
+  const menu = document.getElementById('menu');
+  const countDisplay = document.getElementById('count-display');
+  const resetBtn = document.getElementById('reset-btn');
+  const statusDot = document.getElementById('status-dot');
+  const startFlash = document.getElementById('start-flash');
+  const completeScreen = document.getElementById('complete-screen');
+  const summaryScreen = document.getElementById('summary-screen');
+  const summaryDate = document.getElementById('summary-date');
+  const summaryStart = document.getElementById('summary-start');
+  const summaryCurrentDuration = document.getElementById('summary-current-duration');
+  const summaryHistory = document.getElementById('summary-history');
+  const restartBtn = document.getElementById('restart-btn');
+
+  function load() {
+    try {
+      const raw = localStorage.getItem(STORAGE_KEY);
+      if (raw) return JSON.parse(raw);
+    } catch (e) {}
+    return {
+      count: 0,
+      sessionStart: null,
+      awaitingFinish: false,
+      pendingEnd: null,
+      completed: [],       // [{start, end, durationMs}] — only full 108 sessions
+      lastIncomplete: null // {count, endedAt} — most recent cut-short session, single slot
+    };
+  }
+
+  function save() {
+    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); } catch (e) {}
+  }
+
+  function vibrate(pattern) {
+    if (navigator.vibrate) navigator.vibrate(pattern);
+  }
+
+  function fmtDuration(ms) {
+    const totalSec = Math.round(ms / 1000);
+    const m = Math.floor(totalSec / 60);
+    const s = totalSec % 60;
+    return m > 0 ? `${m}분 ${s}초` : `${s}초`;
+  }
+
+  function fmtDate(ts) {
+    return new Date(ts).toLocaleDateString('ko-KR', { month: 'long', day: 'numeric' });
+  }
+
+  function fmtTimeOnly(ts) {
+    return new Date(ts).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' });
+  }
+
+  function showStartFlash() {
+    startFlash.classList.add('show');
+    setTimeout(() => startFlash.classList.remove('show'), 900);
+  }
+
+  function setScreen(next) {
+    screen = next;
+    completeScreen.classList.toggle('show', next === 'awaitingFinish');
+    summaryScreen.classList.toggle('show', next === 'summary');
+  }
+
+  // finalize a full 108 session using the stored session start / pendingEnd
+  function finalizeCompletion() {
+    if (state.sessionStart && state.pendingEnd) {
+      state.completed.push({
+        start: state.sessionStart,
+        end: state.pendingEnd,
+        durationMs: state.pendingEnd - state.sessionStart
+      });
+    }
+    state.count = 0;
+    state.sessionStart = null;
+    state.awaitingFinish = false;
+    state.pendingEnd = null;
+    save();
+  }
+
+  function archiveIncompleteAndReset() {
+    if (state.count > 0) {
+      state.lastIncomplete = { count: state.count, endedAt: Date.now() };
+    }
+    state.count = 0;
+    state.sessionStart = null;
+    save();
+  }
+
+  function renderSummary() {
+    const cur = state.completed[state.completed.length - 1];
+    if (cur) {
+      summaryDate.textContent = fmtDate(cur.start);
+      summaryStart.textContent = `${fmtTimeOnly(cur.start)} 시작`;
+      summaryCurrentDuration.textContent = fmtDuration(cur.durationMs);
+    }
+    const past = state.completed.slice(0, -1).slice(-15).reverse();
+    summaryHistory.innerHTML = past.length === 0
+      ? '없음'
+      : past.map(h => `${fmtDate(h.start)} ${fmtTimeOnly(h.start)} · ${fmtDuration(h.durationMs)}`).join('<br>');
+  }
+
+  // ---- app (re)launch handling ----
+  if (state.awaitingFinish) {
+    // 108 was already reached before the app closed — finalize it and
+    // land on the summary, since that session is truly done
+    finalizeCompletion();
+    renderSummary();
+    setScreen('summary');
+  } else {
+    if (state.count > 0) archiveIncompleteAndReset();
+    setScreen('counting');
+    showStartFlash();
+  }
+
+  function spawnRipple(x, y) {
+    const r = document.createElement('div');
+    r.className = 'ripple';
+    r.style.left = x + 'px';
+    r.style.top = y + 'px';
+    document.body.appendChild(r);
+    r.addEventListener('animationend', () => r.remove());
+  }
+
+  // ---- counting ----
+  let longPressTimer = null;
+  let longPressFired = false;
+  let activePointerId = null;
+  const LONG_PRESS_MS = 550;
+
+  function onPointerDown(e) {
+    if (screen !== 'counting') return;
+    if (menu.classList.contains('open')) return;
+    if (activePointerId !== null) return;
+    activePointerId = e.pointerId;
+    longPressFired = false;
+    spawnRipple(e.clientX, e.clientY);
+    longPressTimer = setTimeout(() => {
+      longPressFired = true;
+      openMenu();
+    }, LONG_PRESS_MS);
+  }
+
+  function onPointerUp(e) {
+    if (e.pointerId !== activePointerId) return;
+    activePointerId = null;
+    if (screen !== 'counting') return;
+    if (menu.classList.contains('open')) return;
+    clearTimeout(longPressTimer);
+    if (longPressFired) return;
+
+    registerTap();
+  }
+
+  function registerTap() {
+    if (state.count === 0) state.sessionStart = Date.now();
+    state.count += 1;
+
+    if (state.count >= TARGET) {
+      state.awaitingFinish = true;
+      state.pendingEnd = Date.now();
+      save();
+      setScreen('awaitingFinish');
+      vibrate([50, 80, 50, 80, 120]);
+    } else {
+      save();
+      vibrate(12);
+    }
+  }
+
+  function onPointerCancel(e) {
+    if (e.pointerId !== activePointerId) return;
+    activePointerId = null;
+    clearTimeout(longPressTimer);
+  }
+
+  stage.addEventListener('pointerdown', onPointerDown);
+  stage.addEventListener('pointerup', onPointerUp);
+  stage.addEventListener('pointercancel', onPointerCancel);
+  stage.addEventListener('pointerleave', onPointerCancel);
+
+  // tap the completion ring to finish -> go to the summary screen, which
+  // is the resting/"done" state until the app is relaunched or restarted
+  completeScreen.addEventListener('pointerup', () => {
+    if (screen !== 'awaitingFinish') return;
+    finalizeCompletion();
+    renderSummary();
+    setScreen('summary');
+    vibrate(25);
+  });
+
+  restartBtn.addEventListener('click', () => {
+    state.sessionStart = null;
+    save();
+    setScreen('counting');
+    showStartFlash();
+  });
+
+  function openMenu() {
+    countDisplay.textContent = state.count;
+    menu.classList.add('open');
+    vibrate(20);
+  }
+
+  function closeMenu() {
+    menu.classList.remove('open');
+  }
+
+  menu.addEventListener('click', (e) => {
+    if (e.target === resetBtn) return;
+    closeMenu();
+  });
+
+  resetBtn.addEventListener('click', () => {
+    archiveIncompleteAndReset();
+    closeMenu();
+    showStartFlash();
+  });
+
+  // ---- hidden dev shortcuts (fast-forward the count while testing) ----
+  // 1) long-press the tiny wake-lock dot in the corner for ~1.2s -> jumps
+  //    straight to TARGET-5 so you only need a few real taps to finish.
+  // 2) desktop keyboard: press "d" to add +10 to the count.
+  // Remove this block before actually relying on this for real practice logging.
+  let devTimer = null;
+  statusDot.addEventListener('pointerdown', () => {
+    if (screen !== 'counting') return;
+    devTimer = setTimeout(() => {
+      if (state.count === 0) state.sessionStart = Date.now();
+      state.count = Math.max(state.count, TARGET - 5);
+      save();
+      vibrate(15);
+    }, 1200);
+  });
+  statusDot.addEventListener('pointerup', () => clearTimeout(devTimer));
+  statusDot.addEventListener('pointerleave', () => clearTimeout(devTimer));
+
+  document.addEventListener('keydown', (e) => {
+    if (screen !== 'counting') return;
+    if (e.key === 'd') {
+      if (state.count === 0) state.sessionStart = Date.now();
+      state.count += 10;
+      save();
+    }
+  });
+
+  // ---- wake lock: keep screen on while app is open ----
+  let wakeLock = null;
+  async function requestWakeLock() {
+    try {
+      if ('wakeLock' in navigator) {
+        wakeLock = await navigator.wakeLock.request('screen');
+        statusDot.classList.add('awake');
+        wakeLock.addEventListener('release', () => statusDot.classList.remove('awake'));
+      }
+    } catch (err) {
+      statusDot.classList.remove('awake');
+    }
+  }
+
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') requestWakeLock();
+  });
+
+  requestWakeLock();
+
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.register('sw.js').catch(() => {});
+  }
+})();
+</script>
+</body>
+</html>
